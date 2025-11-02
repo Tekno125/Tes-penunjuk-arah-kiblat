@@ -1,122 +1,198 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Penunjuk Arah Kiblat (Kalibrasi Modern)</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Kiblat — Sensor Modern (Perbaikan Wrap & Orientasi)</title>
 <style>
-  body {
-    font-family: sans-serif;
-    text-align: center;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    background: radial-gradient(circle at top, #eef, #ccd);
-  }
-  #arrow {
-    width: 100px; height: 100px;
-    transition: transform 0.15s linear;
-  }
-  button {
-    margin-top: 1em;
-    padding: 0.5em 1em;
-    border-radius: 8px;
-    border: none;
-    background: #4c7; color: white;
-    font-size: 1em;
-  }
+  body{font-family:system-ui,Arial;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f2f7fb}
+  .card{width:100%;max-width:520px;background:#fff;padding:18px;border-radius:12px;box-shadow:0 8px 30px rgba(7,40,60,0.08);text-align:center}
+  h1{margin:0 0 6px;font-size:18px}
+  #status{color:#5b6b7a;margin-bottom:8px;font-size:13px}
+  #arrow{width:150px;height:150px;transition:transform 80ms linear;will-change:transform;margin:18px auto;display:block}
+  button{padding:10px 14px;border-radius:10px;border:0;background:#0b74d1;color:#fff;cursor:pointer}
+  .meta{font-size:13px;color:#6f7f8f;margin-top:8px}
+  .debug{font-family:monospace;font-size:12px;margin-top:8px;color:#334}
 </style>
 </head>
 <body>
-  <h1>Penunjuk Arah Kiblat</h1>
-  <p id="status">Menunggu izin lokasi...</p>
-  <svg id="arrow" viewBox="0 0 100 100">
-    <polygon points="50,10 60,60 50,50 40,60" fill="red" />
-  </svg>
-  <button id="startBtn">Aktifkan Sensor Arah</button>
+  <div class="card">
+    <h1>Penunjuk Arah Kiblat — Perbaikan</h1>
+    <div id="status">Menunggu lokasi & sensor...</div>
+
+    <!-- panah SVG (menghadap atas pada 0deg) -->
+    <svg id="arrow" viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="48" fill="rgba(11,116,209,0.04)"/>
+      <g>
+        <rect x="49" y="34" width="2" height="36" rx="1" fill="#d33"/>
+        <polygon points="50,14 60,46 50,38 40,46" fill="#d33"/>
+      </g>
+    </svg>
+
+    <div class="meta" id="degText">— °</div>
+    <div style="margin-top:12px">
+      <button id="startBtn">Aktifkan Sensor Arah</button>
+    </div>
+
+    <div class="debug" id="dbg" aria-live="polite" style="display:none"></div>
+  </div>
 
 <script>
-const kaaba = { lat: 21.422487, lon: 39.826206 };
-let qiblaDeg = null;
-let compassHeading = 0;
+/* ===== helper matematika ===== */
+function quatToMatrix(q){
+  // q = [x,y,z,w] where w is scalar last (Sensor API often gives [x,y,z,w])
+  const x = q[0], y = q[1], z = q[2], w = q[3];
+  const xx = x*x, yy = y*y, zz = z*z;
+  const xy = x*y, xz = x*z, yz = y*z;
+  const wx = w*x, wy = w*y, wz = w*z;
+  // rotation matrix 3x3 (row-major)
+  return [
+    [1 - 2*(yy + zz),     2*(xy - wz),         2*(xz + wy)],
+    [2*(xy + wz),         1 - 2*(xx + zz),     2*(yz - wx)],
+    [2*(xz - wy),         2*(yz + wx),         1 - 2*(xx + yy)]
+  ];
+}
 
-function calcQibla(lat, lon) {
+// normalize angle 0..360
+function norm360(a){ a = a % 360; if (a<0) a += 360; return a; }
+
+// unwrap interpolation: return newAngle that is oldAngle moved toward target via shortest path
+function shortestRotate(oldAngle, targetAngle){
+  if (oldAngle==null) return targetAngle;
+  // bring both to -180..180 around oldAngle
+  let diff = (targetAngle - oldAngle + 540) % 360 - 180; // diff in (-180,180]
+  return norm360(oldAngle + diff);
+}
+
+/* ===== screen orientation compensation ===== */
+function getScreenOrientationDeg(){
+  // standardized API
+  if (screen.orientation && typeof screen.orientation.angle === 'number') return screen.orientation.angle;
+  // fallback (older mobile)
+  if (typeof window.orientation === 'number') return window.orientation;
+  return 0;
+}
+
+/* ===== qibla calculation (unchanged) ===== */
+const kaaba = { lat:21.422487, lon:39.826206 };
+function calcQibla(lat, lon){
   const φ1 = lat * Math.PI/180, φ2 = kaaba.lat * Math.PI/180;
   const Δλ = (kaaba.lon - lon) * Math.PI/180;
   const θ = Math.atan2(Math.sin(Δλ),
     Math.cos(φ1)*Math.tan(φ2) - Math.sin(φ1)*Math.cos(Δλ));
-  return (θ*180/Math.PI + 360) % 360;
+  return norm360(θ*180/Math.PI);
 }
 
-function updateArrow() {
-  if (qiblaDeg === null) return;
-  const relative = (qiblaDeg - compassHeading + 360) % 360;
-  document.getElementById("arrow").style.transform = `rotate(${relative}deg)`;
+/* ===== state ===== */
+let qiblaDeg = null;
+let heading = null;      // raw heading derived (0..360, 0 north)
+let smoothHeading = null; // smoothed/unwrapped
+const arrow = document.getElementById('arrow');
+const degText = document.getElementById('degText');
+const status = document.getElementById('status');
+const dbg = document.getElementById('dbg');
+
+/* update UI */
+function refreshUI(){
+  if (qiblaDeg==null || smoothHeading==null) {
+    degText.textContent = qiblaDeg==null? 'Arah kiblat: -' : 'Heading perangkat: -';
+    return;
+  }
+  // relative rotation: how much to rotate arrow SVG (arrow points up at 0)
+  // rotate by (qiblaDeg - deviceHeading) so that arrow points to qibla in world
+  const rel = norm360(qiblaDeg - smoothHeading);
+  arrow.style.transform = `rotate(${rel}deg)`;
+  degText.textContent = `Kiblat: ${qiblaDeg.toFixed(2)}°  •  Heading: ${smoothHeading.toFixed(2)}°  (rel ${rel.toFixed(2)}°)`;
 }
 
-function updateStatus(msg) {
-  document.getElementById("status").innerText = msg;
-}
+/* ===== get location once ===== */
+navigator.geolocation.getCurrentPosition(pos=>{
+  const lat = pos.coords.latitude, lon = pos.coords.longitude;
+  qiblaDeg = calcQibla(lat, lon);
+  status.textContent = `Arah kiblat dihitung: ${qiblaDeg.toFixed(2)}° dari utara sejati`;
+}, err=>{
+  status.textContent = 'Gagal baca lokasi — izinkan akses lokasi.';
+});
 
-navigator.geolocation.getCurrentPosition(pos => {
-  const { latitude, longitude } = pos.coords;
-  qiblaDeg = calcQibla(latitude, longitude);
-  updateStatus(`Arah kiblat dari lokasi Anda: ${qiblaDeg.toFixed(2)}° dari utara sejati`);
-}, () => updateStatus("Gagal membaca lokasi."));
-
-async function startOrientation() {
+/* ===== main: gunakan AbsoluteOrientationSensor jika ada, else fallback ===== */
+async function startSensor(){
+  status.textContent = 'Mencoba aktifkan sensor...';
+  dbg.style.display='none';
   try {
+    // modern sensor API (AbsoluteOrientationSensor)
     if ('AbsoluteOrientationSensor' in window) {
-      const sensor = new AbsoluteOrientationSensor({ frequency: 60, referenceFrame: 'device' });
-      sensor.addEventListener("reading", () => {
-        const q = sensor.quaternion;
+      // beberapa browser membutuhkan izin diatas (secure context)
+      let SensorClass = AbsoluteOrientationSensor;
+      const sensor = new SensorClass({frequency: 60, referenceFrame: 'device'});
+      sensor.addEventListener('reading', ()=>{
+        const q = sensor.quaternion; // [x,y,z,w]
         if (!q) return;
+        const rot = quatToMatrix(q); // 3x3
+        // Ambil heading (azimuth) dari matriks, tapi komposisinya tergantung axis-convention.
+        // Formula berikut mengambil arah 'x' basis pada bidang horisontal:
+        // heading = atan2(rot[1][0], rot[0][0]) in radians -> convert to deg
+        // lalu kompensasi screen orientation
+        let raw = Math.atan2(rot[1][0], rot[0][0]) * 180/Math.PI; // (-180..180]
+        raw = norm360(raw); // 0..360
 
-        // Kuaternion → Matriks rotasi (right-handed coordinate)
-        const [x, y, z, w] = q;
-        const rot = [
-          [1 - 2*(y*y + z*z),     2*(x*y - z*w),     2*(x*z + y*w)],
-          [2*(x*y + z*w), 1 - 2*(x*x + z*z), 2*(y*z - x*w)],
-          [2*(x*z - y*w), 2*(y*z + x*w), 1 - 2*(x*x + y*y)]
-        ];
+        // koreksi rotasi layar (portrait/landscape)
+        const screenAngle = getScreenOrientationDeg(); // biasanya 0,90,180,270
+        // adjust so heading refers to geographic north regardless screen rotation
+        let corrected = norm360(raw + screenAngle);
 
-        // Ambil azimuth (heading)
-        let heading = Math.atan2(rot[1][0], rot[0][0]) * 180 / Math.PI;
-        if (heading < 0) heading += 360;
+        // smoothing & unwrap to avoid 360->0 jumps
+        smoothHeading = shortestRotate(smoothHeading, corrected);
 
-        // Koreksi orientasi portrait
-        compassHeading = heading;
-        updateArrow();
+        heading = corrected;
+        // debug optionally
+        dbg.textContent = `raw:${raw.toFixed(2)}°, screen:${screenAngle}°, corrected:${corrected.toFixed(2)}°\nquat:[${q.map(v=>v.toFixed(3)).join(',')}]`;
+        refreshUI();
       });
-      sensor.start();
-      updateStatus("Sensor modern aktif ✅ Putar perangkat Anda ke arah utara sejati.");
+      sensor.addEventListener('error', (ev)=>{
+        console.warn('Sensor error', ev.error);
+        status.textContent = 'Sensor error: ' + (ev.error && ev.error.name || ev.error.message || ev.error);
+      });
+      await sensor.start();
+      status.textContent = 'Sensor modern aktif ✅ Putar perangkat perlahan untuk tes.';
       return;
     }
 
-    if (typeof DeviceOrientationEvent === "undefined") {
-      updateStatus("Sensor orientasi tidak tersedia.");
-      return;
-    }
-    if (typeof DeviceOrientationEvent.requestPermission === "function") {
+    // fallback: legacy deviceorientation (requestPermission on iOS/modern)
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       const res = await DeviceOrientationEvent.requestPermission();
-      if (res !== "granted") throw new Error("Izin sensor ditolak");
+      if (res !== 'granted') throw new Error('Izin sensor ditolak');
     }
-
-    window.addEventListener("deviceorientation", e => {
-      if (e.alpha !== null) {
-        compassHeading = 360 - e.alpha;
-        updateArrow();
+    window.addEventListener('deviceorientation', (e)=>{
+      if (e.absolute === false && e.alpha == null) {
+        status.textContent = 'Sensor tidak memberikan data absolute.';
+        return;
       }
+      // e.alpha => rotation around Z (deg), but sign/zero may differ; common convention:
+      let rawAlpha = e.alpha; // 0..360 (may be relative)
+      if (rawAlpha == null) return;
+      // Convert to heading: many browsers: heading = 360 - alpha
+      let raw = norm360(360 - rawAlpha);
+      const screenAngle = getScreenOrientationDeg();
+      let corrected = norm360(raw + screenAngle);
+      smoothHeading = shortestRotate(smoothHeading, corrected);
+      heading = corrected;
+      dbg.style.display='block';
+      dbg.textContent = `alpha:${rawAlpha?.toFixed(2)}°, corrected:${corrected.toFixed(2)}°`;
+      refreshUI();
     });
-    updateStatus("Sensor arah aktif (versi lama) ✅");
+    status.textContent = 'DeviceOrientation (fallback) aktif — perhatikan izin & kalibrasi.';
   } catch (err) {
-    updateStatus("Gagal aktifkan sensor: " + err.message);
+    console.error(err);
+    status.textContent = 'Gagal aktifkan sensor: ' + (err && err.message || err);
+    dbg.style.display='block';
+    dbg.textContent = String(err);
   }
 }
 
-document.getElementById("startBtn").addEventListener("click", startOrientation);
+document.getElementById('startBtn').addEventListener('click', startSensor);
+
+/* optional: small UI refresh loop so arrow updates if needed */
+setInterval(()=>{ refreshUI(); }, 80);
 </script>
 </body>
 </html>
