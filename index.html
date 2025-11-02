@@ -3,31 +3,63 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Orientasi Ponsel</title>
+    <title>Derajat Orientasi Ponsel Realtime</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            padding: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin-top: 20px;
+        }
+    </style>
 </head>
 <body>
     <h1>Derajat Orientasi Ponsel</h1>
-    <p>Alpha (Arah hadap): <strong id="alphaValue">0</strong> &deg;</p>
-    <p>Beta (Depan-Belakang): <strong id="betaValue">0</strong> &deg;</p>
-    <p>Gamma (Kiri-Kanan): <strong id="gammaValue">0</strong> &deg;</p>
+    <p>Alpha (arah hadap utara): <strong id="alphaValue">0</strong>°</p>
+    <p>Beta (depan-belakang): <strong id="betaValue">0</strong>°</p>
+    <p>Gamma (kiri-kanan): <strong id="gammaValue">0</strong>°</p>
+
+    <button id="startButton">Mulai Sensor</button>
 
     <script>
-        // Periksa apakah browser mendukung Device Orientation API
-        if (window.DeviceOrientationEvent) {
-            window.addEventListener("deviceorientation", handleOrientation);
-        } else {
-            alert("Browser Anda tidak mendukung Device Orientation API");
-        }
+        const alphaEl = document.getElementById('alphaValue');
+        const betaEl = document.getElementById('betaValue');
+        const gammaEl = document.getElementById('gammaValue');
+        const startButton = document.getElementById('startButton');
 
         function handleOrientation(event) {
             const alpha = event.alpha;
             const beta = event.beta;
             const gamma = event.gamma;
 
-            document.getElementById('alphaValue').textContent = alpha.toFixed(2);
-            document.getElementById('betaValue').textContent = beta.toFixed(2);
-            document.getElementById('gammaValue').textContent = gamma.toFixed(2);
+            alphaEl.textContent = alpha ? alpha.toFixed(2) : 0;
+            betaEl.textContent = beta ? beta.toFixed(2) : 0;
+            gammaEl.textContent = gamma ? gamma.toFixed(2) : 0;
         }
+
+        function startSensor() {
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                // Untuk iOS / Safari
+                DeviceOrientationEvent.requestPermission().then(response => {
+                    if (response === 'granted') {
+                        window.addEventListener('deviceorientation', handleOrientation);
+                        startButton.style.display = 'none';
+                    } else {
+                        alert('Izin akses sensor ditolak.');
+                    }
+                }).catch(console.error);
+            } else {
+                // Untuk Android / browser lain
+                window.addEventListener('deviceorientation', handleOrientation);
+                startButton.style.display = 'none';
+            }
+        }
+
+        startButton.addEventListener('click', startSensor);
     </script>
 </body>
 </html>
