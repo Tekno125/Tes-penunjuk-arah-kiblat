@@ -1,112 +1,33 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Kiblat Realtime v3 — Auto Deteksi Arah</title>
-<style>
-body{font-family:system-ui;margin:0;background:#eef;display:flex;justify-content:center;align-items:center;height:100vh}
-#app{background:#fff;padding:16px;border-radius:12px;box-shadow:0 8px 25px rgba(0,0,0,.1);text-align:center;width:95%;max-width:480px}
-#arrow{width:150px;height:150px;transition:transform .1s linear;margin:12px auto}
-button{background:#0077cc;color:white;border:none;padding:8px 16px;border-radius:8px;font-size:15px;cursor:pointer}
-#status{font-size:13px;color:#456;margin-top:6px}
-#debug{font-family:monospace;font-size:11px;color:#333;white-space:pre-wrap;margin-top:6px}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orientasi Ponsel</title>
 </head>
 <body>
-<div id="app">
-<h2>Penunjuk Arah Kiblat v3</h2>
-<svg id="arrow" viewBox="0 0 100 100">
-  <polygon points="50,10 60,60 50,50 40,60" fill="red"/>
-</svg>
-<div id="degtext">–</div>
-<button id="startBtn">Aktifkan Sensor</button>
-<div id="status">Menunggu izin lokasi...</div>
-<div id="debug"></div>
-</div>
-<script>
-const kaaba = {lat:21.4225, lon:39.8262};
-let qiblaDeg=null, heading=0, smooth=null;
+    <h1>Derajat Orientasi Ponsel</h1>
+    <p>Alpha (Arah hadap): <strong id="alphaValue">0</strong> &deg;</p>
+    <p>Beta (Depan-Belakang): <strong id="betaValue">0</strong> &deg;</p>
+    <p>Gamma (Kiri-Kanan): <strong id="gammaValue">0</strong> &deg;</p>
 
-function calcQibla(lat,lon){
-  const φ1=lat*Math.PI/180, φ2=kaaba.lat*Math.PI/180;
-  const Δλ=(kaaba.lon-lon)*Math.PI/180;
-  const θ=Math.atan2(Math.sin(Δλ),
-      Math.cos(φ1)*Math.tan(φ2)-Math.sin(φ1)*Math.cos(Δλ));
-  return (θ*180/Math.PI+360)%360;
-}
-function norm(a){a%=360; if(a<0)a+=360; return a;}
-function lerpAng(a,b){if(a==null)return b;let d=((b-a+540)%360)-180;return norm(a+d*0.3);}
-function quatToMatrix(q){
-  const [x,y,z,w]=q;
-  return [
-    [1-2*(y*y+z*z),2*(x*y-z*w),2*(x*z+y*w)],
-    [2*(x*y+z*w),1-2*(x*x+z*z),2*(y*z-x*w)],
-    [2*(x*z-y*w),2*(y*z+x*w),1-2*(x*x+y*y)]
-  ];
-}
-function getScreenAngle(){
-  if(screen.orientation&&typeof screen.orientation.angle==="number")return screen.orientation.angle;
-  if(typeof window.orientation==="number")return window.orientation;
-  return 0;
-}
-function updateArrow(){
-  if(qiblaDeg==null)return;
-  const rel=norm(qiblaDeg-heading);
-  document.getElementById("arrow").style.transform=`rotate(${rel}deg)`;
-  document.getElementById("degtext").textContent=`Kiblat ${qiblaDeg.toFixed(1)}° | Kompas ${heading.toFixed(1)}° | Rel ${rel.toFixed(1)}°`;
-}
-navigator.geolocation.getCurrentPosition(pos=>{
-  const {latitude,longitude}=pos.coords;
-  qiblaDeg=calcQibla(latitude,longitude);
-  document.getElementById("status").textContent=`Arah kiblat: ${qiblaDeg.toFixed(2)}° dari utara sejati`;
-});
-async function startSensor(){
-  const status=document.getElementById("status"),dbg=document.getElementById("debug");
-  try{
-    if("AbsoluteOrientationSensor" in window){
-      const s=new AbsoluteOrientationSensor({frequency:60,referenceFrame:"device"});
-      s.addEventListener("reading",()=>{
-        const q=s.quaternion;
-        if(!q)return;
-        const rot=quatToMatrix(q);
-        // Tiga kemungkinan pembacaan yaw (vendor berbeda)
-        const yawA=Math.atan2(rot[1][0],rot[0][0])*180/Math.PI;
-        const yawB=Math.atan2(-rot[0][1],rot[1][1])*180/Math.PI;
-        const yawC=Math.atan2(rot[0][2],rot[1][2])*180/Math.PI;
-        // pilih yaw yang berubah halus (selisih kecil dari frame ke frame)
-        const candidates=[yawA,yawB,yawC].map(norm);
-        let chosen=candidates[0];
-        // koreksi orientasi layar
-        const sc=getScreenAngle();
-        chosen=norm(chosen+sc);
-        heading=lerpAng(smooth,chosen);
-        smooth=heading;
-        updateArrow();
-        dbg.textContent=`yawA=${candidates[0].toFixed(1)} yawB=${candidates[1].toFixed(1)} yawC=${candidates[2].toFixed(1)} screen=${sc}`;
-      });
-      s.start();
-      status.textContent="Sensor modern aktif ✅";
-      return;
-    }
-    // fallback
-    if(typeof DeviceOrientationEvent.requestPermission==="function"){
-      const res=await DeviceOrientationEvent.requestPermission();
-      if(res!=="granted")throw new Error("Izin sensor ditolak");
-    }
-    window.addEventListener("deviceorientation",e=>{
-      if(e.alpha==null)return;
-      const raw=norm(360-e.alpha+getScreenAngle());
-      heading=lerpAng(smooth,raw);
-      smooth=heading;
-      updateArrow();
-    });
-    status.textContent="Sensor arah aktif (fallback) ✅";
-  }catch(err){
-    status.textContent="Gagal sensor: "+err.message;
-  }
-}
-document.getElementById("startBtn").onclick=startSensor;
-</script>
+    <script>
+        // Periksa apakah browser mendukung Device Orientation API
+        if (window.DeviceOrientationEvent) {
+            window.addEventListener("deviceorientation", handleOrientation);
+        } else {
+            alert("Browser Anda tidak mendukung Device Orientation API");
+        }
+
+        function handleOrientation(event) {
+            const alpha = event.alpha;
+            const beta = event.beta;
+            const gamma = event.gamma;
+
+            document.getElementById('alphaValue').textContent = alpha.toFixed(2);
+            document.getElementById('betaValue').textContent = beta.toFixed(2);
+            document.getElementById('gammaValue').textContent = gamma.toFixed(2);
+        }
+    </script>
 </body>
 </html>
