@@ -3,36 +3,29 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Penunjuk Arah Kiblat</title>
+<title>Penunjuk Arah Kiblat (Modern)</title>
 <style>
   body {
     font-family: sans-serif;
+    text-align: center;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     height: 100vh;
     background: radial-gradient(circle at top, #eef, #ccd);
-    text-align: center;
   }
-  h1 { margin-bottom: 0.3em; }
-  #status { margin: 0.5em; font-size: 1.1em; }
   #arrow {
-    width: 100px;
-    height: 100px;
+    width: 100px; height: 100px;
     transition: transform 0.2s linear;
   }
-  #slider-container { display: none; margin-top: 1em; }
-  #slider { width: 200px; }
   button {
     margin-top: 1em;
     padding: 0.5em 1em;
     font-size: 1em;
     border: none;
     border-radius: 8px;
-    background-color: #4c7;
-    color: white;
-    cursor: pointer;
+    background: #4c7; color: white;
   }
 </style>
 </head>
@@ -42,29 +35,21 @@
   <svg id="arrow" viewBox="0 0 100 100">
     <polygon points="50,10 60,60 50,50 40,60" fill="red" />
   </svg>
-  <div id="slider-container">
-    <input type="range" id="slider" min="0" max="360" value="0">
-    <p>Arah manual: <span id="manual-angle">0</span>°</p>
-  </div>
   <button id="startBtn">Aktifkan Sensor Arah</button>
 
 <script>
 const kaaba = { lat: 21.422487, lon: 39.826206 };
 let qiblaDeg = null;
 let compassHeading = 0;
-let usingSensor = false;
 
-// Hitung arah kiblat (derajat azimuth dari utara sejati)
 function calcQibla(lat, lon) {
-  const φ1 = lat * Math.PI/180;
-  const φ2 = kaaba.lat * Math.PI/180;
+  const φ1 = lat * Math.PI/180, φ2 = kaaba.lat * Math.PI/180;
   const Δλ = (kaaba.lon - lon) * Math.PI/180;
   const θ = Math.atan2(Math.sin(Δλ),
     Math.cos(φ1)*Math.tan(φ2) - Math.sin(φ1)*Math.cos(Δλ));
-  return (θ * 180/Math.PI + 360) % 360;
+  return (θ*180/Math.PI + 360) % 360;
 }
 
-// Rotasi panah
 function updateArrow() {
   if (qiblaDeg === null) return;
   const relative = (qiblaDeg - compassHeading + 360) % 360;
@@ -75,49 +60,55 @@ function updateStatus(msg) {
   document.getElementById("status").innerText = msg;
 }
 
-// Ambil lokasi pengguna
+// Dapatkan lokasi
 navigator.geolocation.getCurrentPosition(pos => {
   const { latitude, longitude } = pos.coords;
   qiblaDeg = calcQibla(latitude, longitude);
   updateStatus(`Arah kiblat dari lokasi Anda: ${qiblaDeg.toFixed(2)}° dari utara sejati`);
-}, err => {
-  updateStatus("Gagal membaca lokasi. Izinkan akses lokasi di browser Anda.");
-});
+}, () => updateStatus("Gagal membaca lokasi. Izinkan akses lokasi di browser."));
 
-// Aktivasi sensor
-document.getElementById("startBtn").addEventListener("click", async () => {
+async function startOrientation() {
   try {
-    if (typeof DeviceOrientationEvent === "undefined") {
-      updateStatus("Sensor orientasi tidak tersedia di perangkat ini.");
-      document.getElementById("slider-container").style.display = "block";
+    // Jika tersedia, gunakan API sensor modern
+    if ('AbsoluteOrientationSensor' in window) {
+      const sensor = new AbsoluteOrientationSensor({ frequency: 60 });
+      sensor.addEventListener("reading", () => {
+        const q = sensor.quaternion;
+        if (q) {
+          // konversi quaternion ke heading
+          const yaw = Math.atan2(2*(q[0]*q[3] + q[1]*q[2]), 1 - 2*(q[2]**2 + q[3]**2));
+          compassHeading = (yaw * 180/Math.PI + 360) % 360;
+          updateArrow();
+        }
+      });
+      sensor.start();
+      updateStatus("Sensor modern aktif ✅");
       return;
     }
 
+    // Jika tidak, pakai cara lama dengan izin manual
+    if (typeof DeviceOrientationEvent === "undefined") {
+      updateStatus("Sensor orientasi tidak tersedia.");
+      return;
+    }
     if (typeof DeviceOrientationEvent.requestPermission === "function") {
       const res = await DeviceOrientationEvent.requestPermission();
       if (res !== "granted") throw new Error("Izin sensor ditolak");
     }
 
-    usingSensor = true;
-    updateStatus("Sensor aktif ✅ Putar perangkat Anda...");
     window.addEventListener("deviceorientation", e => {
-      if (e.absolute && e.alpha !== null) {
-        compassHeading = 360 - e.alpha; // rotasi searah jarum jam
+      if (e.alpha !== null) {
+        compassHeading = 360 - e.alpha;
         updateArrow();
       }
     });
+    updateStatus("Sensor arah aktif (versi lama) ✅");
   } catch (err) {
-    updateStatus("Sensor tidak dapat diaktifkan: " + err.message);
-    document.getElementById("slider-container").style.display = "block";
+    updateStatus("Gagal aktifkan sensor: " + err.message);
   }
-});
+}
 
-// Fallback manual
-document.getElementById("slider").addEventListener("input", e => {
-  compassHeading = parseFloat(e.target.value);
-  document.getElementById("manual-angle").innerText = compassHeading.toFixed(0);
-  updateArrow();
-});
+document.getElementById("startBtn").addEventListener("click", startOrientation);
 </script>
 </body>
 </html>
