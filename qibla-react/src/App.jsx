@@ -6,6 +6,15 @@ export default function App() {
   const [qiblaAngle, setQiblaAngle] = useState(null);
   const { heading, permissionGranted } = useCompass();
 
+  // Smooth heading untuk animasi lebih halus
+  const [displayHeading, setDisplayHeading] = useState(0);
+
+  useEffect(() => {
+    if (heading !== null) {
+      setDisplayHeading((prev) => prev + ((heading - prev + 360) % 360) * 0.1);
+    }
+  }, [heading]);
+
   // 1️⃣ Dapatkan lokasi pengguna
   useEffect(() => {
     if (navigator.geolocation) {
@@ -41,12 +50,12 @@ export default function App() {
   }, [location]);
 
   // 3️⃣ Hitung rotasi panah relatif ke utara
-  const rotation = heading !== null && qiblaAngle !== null
-    ? qiblaAngle - heading
+  const rotation = displayHeading !== null && qiblaAngle !== null
+    ? (qiblaAngle - displayHeading + 360) % 360
     : 0;
 
   return (
-    <div className="flex flex-col items-center justify-center h-screen bg-gray-100 text-center">
+    <div className="flex flex-col items-center justify-center h-screen bg-gray-100 text-center p-4">
       <h1 className="text-2xl font-bold mb-4">🧭 Penunjuk Arah Kiblat</h1>
 
       {!permissionGranted && (
@@ -58,15 +67,23 @@ export default function App() {
           <p>Lokasi Anda: {location.lat.toFixed(4)}, {location.lon.toFixed(4)}</p>
           <p>Arah Kiblat: {qiblaAngle?.toFixed(2)}°</p>
           <p>Arah Utara (HP): {heading ? heading.toFixed(2) + "°" : "..."}</p>
+
           <div
-            className="mt-10 w-32 h-32 border-4 border-gray-300 rounded-full flex items-center justify-center"
-            style={{
-              transform: `rotate(${rotation}deg)`,
-              transition: "transform 0.3s ease-out",
-            }}
+            className="mt-10 w-32 h-32 border-4 border-gray-300 rounded-full flex items-center justify-center relative bg-white shadow"
           >
-            <div className="w-0 h-0 border-l-8 border-r-8 border-b-[24px] border-l-transparent border-r-transparent border-b-green-600"></div>
+            {/* Panah kiblat */}
+            <div
+              className="absolute bottom-1/2 left-1/2 w-0 h-0 border-l-8 border-r-8 border-b-20 border-l-transparent border-r-transparent border-b-green-600 origin-bottom"
+              style={{
+                transform: `translate(-50%, 50%) rotate(${rotation}deg)`,
+                transition: "transform 0.2s ease-out",
+              }}
+            ></div>
+
+            {/* Opsional: lingkaran pusat */}
+            <div className="absolute w-4 h-4 bg-gray-700 rounded-full"></div>
           </div>
+
           <p className="mt-4 text-sm text-gray-500">Putar HP agar panah menunjuk arah kiblat</p>
         </>
       ) : (
