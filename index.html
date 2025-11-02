@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Arah Kiblat Realtime</title>
+<style>
+  :root { --bg:#f6fbff; --card:#fff; --accent:#0b74d1; --muted:#666; }
+  html,body{height:100%}
+  body{
+    margin:0;
+    font-family:Inter,system-ui,Segoe UI,Roboto,Arial;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:linear-gradient(180deg,#eef7ff, #f6fbff);
+    color:#07304a;
+    padding:20px;
+  }
+  .card{
+    width:100%;
+    max-width:460px;
+    background:var(--card);
+    border-radius:14px;
+    box-shadow:0 6px 30px rgba(7,48,74,0.08);
+    padding:20px;
+    text-align:center;
+  }
+  h1{margin:0 0 8px;font-size:20px}
+  p.lead{margin:0 0 12px;color:var(--muted)}
+  #coords{font-size:14px;color:var(--muted); margin-top:6px}
+  .big {
+    margin-top:18px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:18px;
+    flex-direction:column;
+  }
+
+  /* Kotak panah */
+  .compass {
+    width:220px;
+    height:220px;
+    border-radius:50%;
+    background:linear-gradient(180deg, rgba(11,116,209,0.06), rgba(11,116,209,0.02));
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    position:relative;
+    box-shadow: inset 0 -6px 20px rgba(11,116,209,0.02);
+  }
+  /* Penanda utara sederhana (N) */
+  .north {
+    position:absolute;
+    top:10px;
+    font-weight:600;
+    color:var(--muted);
+    font-size:14px;
+  }
+
+  /* SVG arrow, put pivot di tengah */
+  .arrow {
+    width:110px;
+    height:110px;
+    transform-origin:50% 50%;
+    transition: transform 120ms linear; /* realtime, halus */
+    will-change: transform;
+  }
+
+  .info {
+    margin-top:12px;
+    font-size:16px;
+  }
+  .deg {
+    font-weight:700;
+    font-size:20px;
+    color:var(--accent);
+  }
+
+  .controls { margin-top:16px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;}
+  button {
+    background:var(--accent);
+    color:white;
+    border:0;
+    padding:8px 12px;
+    border-radius:8px;
+    cursor:pointer;
+    font-weight:600;
+  }
+  button.secondary {
+    background:#e9f3ff;
+    color:var(--accent);
+    border:1px solid rgba(11,116,209,0.08);
+  }
+  .note { margin-top:12px; font-size:13px; color:var(--muted) }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Arah Kiblat Realtime</h1>
+    <p class="lead">Panah akan menunjuk ke arah kiblat saat perangkat Anda diputar.</p>
+
+    <div id="status" class="note">Tekan <b>Mulai</b> untuk memberikan izin lokasi & sensor.</div>
+
+    <div class="big" aria-live="polite">
+      <div class="compass" id="compass">
+        <div class="north">N</div>
+        <!-- SVG arrow (panah tunggal, ujung menunjuk ke atas pada rotasi 0) -->
+        <svg class="arrow" id="arrow" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" role="img">
+          <!-- batang -->
+          <rect x="47" y="30" width="6" height="40" rx="3" />
+          <!-- kepala panah -->
+          <polygon points="50,10 62,36 50,28 38,36" />
+          <!-- lingkaran pivot kecil -->
+          <circle cx="50" cy="70" r="6" fill="#fff" stroke="none" />
+        </svg>
+      </div>
+
+      <div class="info">
+        <div id="qiblaDeg" class="deg">— °</div>
+        <div id="coords" aria-hidden="false">Koordinat: —</div>
+        <div id="compassInfo" class="note">Heading perangkat: —</div>
+      </div>
+
+      <div class="controls">
+        <button id="startBtn">Mulai</button>
+        <button id="calBtn" class="secondary">Kalibrasi / Reset</button>
+      </div>
+
+      <div class="note" style="max-width:380px">
+        Catatan: Agar panah akurat, berikan izin lokasi. Pada beberapa iPhone/iPad (iOS 13+) Anda perlu memberikan izin sensor gerak (DeviceOrientation) lewat dialog yang muncul; jika tidak muncul, buka <em>Settings → Safari → Motion & Orientation Access</em>.
+      </div>
+    </div>
+  </div>
+
+<script>
+/* Koordinat Ka'bah (Masjid al-Haram) */
+const phiK = 21.422487 * Math.PI/180;
+const lambdaK = 39.826206 * Math.PI/180;
+
+let userLat = null, userLon = null, qiblaBearing = null;
+
+/* rumus seperti sebelumnya: menghasilkan derajat 0..360 (0 = utara true) */
+function qiblaBearingDeg(phiDeg, lambdaDeg) {
+  const phi = phiDeg * Math.PI/180;
+  const lamb = lambdaDeg * Math.PI/180;
+  const delta = lambdaK - lamb;
+  const x = Math.sin(delta);
+  const y = Math.cos(phi)*Math.tan(phiK) - Math.sin(phi)*Math.cos(delta);
+  let bearing = Math.atan2(x, y) * 180/Math.PI;
+  if (bearing < 0) bearing += 360;
+  return bearing;
+}
+
+/* helper 16-sector name (opsional) */
+function compassName(deg) {
+  const dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+  return dirs[(Math.round(deg/22.5) % 16)];
+}
+
+/* Update teks UI */
+function updateUIHeadingText() {
+  const degEl = document.getElementById('qiblaDeg');
+  if (qiblaBearing == null) {
+    degEl.textContent = "— °";
+    return;
+  }
+  degEl.textContent = qiblaBearing.toFixed(2) + "° — " + compassName(qiblaBearing);
+  document.getElementById('coords').textContent = userLat && userLon ? `Koordinat: ${userLat.toFixed(6)}, ${userLon.toFixed(6)}` : 'Koordinat: —';
+}
+
+/* Rotate arrow so it points to qibla given device heading.
+   If deviceHeading is degrees (0 = North), then rotation = qiblaBearing - deviceHeading
+   Because SVG arrow points up at 0deg, rotating it by that angle will make it point to qibla.
+*/
+function rotateArrowTo(deviceHeading) {
+  const arrow = document.getElementById('arrow');
+  if (qiblaBearing == null || deviceHeading == null) return;
+  // Normalize values
+  let rot = qiblaBearing - deviceHeading;
+  // Keep in -180..180 for smoother rotation
+  rot = ((rot + 540) % 360) - 180;
+  arrow.style.transform = `rotate(${rot}deg)`;
+  document.getElementById('compassInfo').textContent = `Heading perangkat: ${deviceHeading.toFixed(1)}°`;
+}
+
+/* Ambil lokasi sekali (geolocation). */
+function getLocationOnce() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocation tidak didukung'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(pos => resolve(pos), err => reject(err), { enableHighAccuracy: true, timeout:10000 });
+  });
+}
+
+/* Dapatkan heading dari DeviceOrientation event.
+   iOS Safari sering menyediakan event.webkitCompassHeading (keterangan: heading relatif ke utara magnetik).
+   Banyak Android memberikan event.alpha (but depends on "absolute" flag).
+   Kita menggabungkan beberapa strategi dan fallback.
+*/
+let orientationHandler = null;
+
+function startDeviceOrientationListening() {
+  // Remove previously attached if any
+  if (orientationHandler) {
+    window.removeEventListener('deviceorientationabsolute', orientationHandler, true);
+    window.removeEventListener('deviceorientation', orientationHandler, true);
+  }
+
+  orientationHandler = function(e) {
+    // Prefer webkitCompassHeading if available (iOS)
+    let heading = null;
+
+    if (e.webkitCompassHeading !== undefined && e.webkitCompassHeading !== null) {
+      // iOS returns heading in degrees (0..360) — 0 = North
+      heading = e.webkitCompassHeading;
+    } else if (e.absolute === true && e.alpha !== null) {
+      // If absolute true, alpha is rotation around Z relative to North (device-dependent)
+      // Many implementations: heading = 360 - alpha (but varies). We try this convention and allow calibration.
+      heading = 360 - e.alpha;
+    } else if (e.alpha !== null) {
+      // fallback: use alpha but may be relative to screen orientation
+      heading = 360 - e.alpha;
+    }
+
+    if (heading !== null) {
+      // normalize 0..360
+      heading = (heading + 360) % 360;
+      rotateArrowTo(heading);
+    }
+  };
+
+  // Try listening to absolute event first (if browser supports)
+  window.addEventListener('deviceorientationabsolute', orientationHandler, true);
+  // Also listen to generic deviceorientation as fallback
+  window.addEventListener('deviceorientation', orientationHandler, true);
+}
+
+/* Meminta izin (iOS) jika perlu, lalu inisialisasi geolocation + deviceorientation */
+async function startAll() {
+  const status = document.getElementById('status');
+  status.textContent = 'Mencoba meminta izin sensor...';
+
+  // iOS 13+ requires DeviceMotion / DeviceOrientation permission via requestPermission
+  async function requestIOSPermissionIfNeeded() {
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      try {
+        const resp = await DeviceMotionEvent.requestPermission(); // prompts the user
+        if (resp !== 'granted') {
+          console.warn('Izin DeviceMotion tidak diberikan:', resp);
+          // still continue to request geolocation
+        }
+      } catch (err) {
+        console.warn('Gagal meminta izin DeviceMotion:', err);
+      }
+    }
+    // Some browsers require similar for DeviceOrientationEvent (older)
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        const resp = await DeviceOrientationEvent.requestPermission();
+        if (resp !== 'granted') {
+          console.warn('Izin DeviceOrientation tidak diberikan:', resp);
+        }
+      } catch (err) {
+        console.warn('Gagal meminta izin DeviceOrientation:', err);
+      }
+    }
+  }
+
+  try {
+    await requestIOSPermissionIfNeeded();
+  } catch(e) {
+    console.warn('Permintaan izin iOS error:', e);
+  }
+
+  try {
+    const pos = await getLocationOnce();
+    userLat = pos.coords.latitude;
+    userLon = pos.coords.longitude;
+    qiblaBearing = qiblaBearingDeg(userLat, userLon);
+    updateUIHeadingText();
+    status.textContent = 'Izin lokasi diterima. Mencoba baca sensor orientasi...';
+    startDeviceOrientationListening();
+  } catch (err) {
+    console.error(err);
+    status.textContent = 'Gagal ambil lokasi: ' + (err.message || err.code || 'unknown');
+    alert('Gagal ambil lokasi: ' + (err.message || err.code || 'unknown') + '\nPastikan izin lokasi diberikan dan coba lagi.');
+  }
+}
+
+/* Kalibrasi / reset: atur ulang tampilan */
+function resetView() {
+  document.getElementById('arrow').style.transform = 'rotate(0deg)';
+  document.getElementById('compassInfo').textContent = 'Heading perangkat: —';
+  document.getElementById('status').textContent = 'Tekan Mulai untuk meminta ulang izin & lokasi.';
+  qiblaBearing = null;
+  userLat = null;
+  userLon = null;
+  updateUIHeadingText();
+}
+
+/* Tombol */
+document.getElementById('startBtn').addEventListener('click', startAll);
+document.getElementById('calBtn').addEventListener('click', resetView);
+
+/* UI awal */
+updateUIHeadingText();
+</script>
+</body>
+</html>
